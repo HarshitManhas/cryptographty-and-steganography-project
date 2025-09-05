@@ -31,7 +31,7 @@ class SteganographyApp:
         self.stego = LSBSteganography()
         self.encryption = DualEncryption()
         self.file_utils = FileUtils()
-        self.cloud = CloudStorage()
+        self.cloud = CloudStorage(provider="google_drive")
         
         # Default directories
         self.keys_dir = "keys"
@@ -186,7 +186,7 @@ class SteganographyApp:
             return None
     
     def hide_file_link(self, file_path: str, cover_image: str, output_image: str,
-                      public_key_path: str = None) -> bool:
+                      public_key_path: str = None, password: str = None) -> bool:
         """
         Upload a file to cloud storage and hide the encrypted link in an image.
         
@@ -195,6 +195,7 @@ class SteganographyApp:
             cover_image (str): Path to cover image
             output_image (str): Path to output stego image
             public_key_path (str, optional): Path to RSA public key
+            password (str, optional): Password for encryption
             
         Returns:
             bool: True if successful, False otherwise
@@ -204,19 +205,63 @@ class SteganographyApp:
                 print(f"✗ File not found: {file_path}")
                 return False
             
-            print(f"Uploading file to cloud storage: {file_path}")
+            # Get file information
+            file_info = self.file_utils.get_file_info(file_path)
+            print(f"File info: {file_info['file_name']} ({file_info['file_size_human']})")
+            print(f"Processing method: {file_info['processing_method']}")
             
-            # Upload file to cloud (this would be implemented with actual cloud service)
-            # For now, we'll simulate this
-            cloud_link = f"https://secure-cloud.example.com/files/{os.path.basename(file_path)}"
-            
-            print(f"✓ File uploaded. Cloud link: {cloud_link}")
-            
-            # Hide the cloud link in the image
-            return self.hide_message(cloud_link, cover_image, output_image, public_key_path)
-            
+            if file_info['should_use_cloud']:
+                print(f"Uploading large file to Google Drive: {file_path}")
+                
+                # Authenticate with Google Drive if needed
+                if not self.cloud.is_authenticated():
+                    print("Authenticating with Google Drive...")
+                    if not self.cloud.authenticate():
+                        print("✗ Google Drive authentication failed")
+                        return False
+                
+                # Upload file to Google Drive
+                upload_result = self.cloud.upload_file(file_path)
+                
+                if not upload_result:
+                    print("✗ Failed to upload file to Google Drive")
+                    return False
+                
+                cloud_link = upload_result['cloud_url']
+                print(f"✓ File uploaded to Google Drive: {upload_result['file_name']}")
+                print(f"✓ Shareable link: {cloud_link}")
+                
+                # Hide the cloud link in the image
+                return self.hide_message(cloud_link, cover_image, output_image, public_key_path, password)
+            else:
+                print(f"File is small enough for direct processing: {file_info['file_size_human']}")
+                # For small files, we can read the content and hide it directly
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        file_content = f.read()
+                    
+                    print(f"Hiding file content directly (not using cloud storage)")
+                    return self.hide_message(file_content, cover_image, output_image, public_key_path, password)
+                    
+                except UnicodeDecodeError:
+                    # Binary file, convert to base64
+                    import base64
+                    with open(file_path, 'rb') as f:
+                        file_content = base64.b64encode(f.read()).decode('ascii')
+                    
+                    # Add metadata for reconstruction
+                    file_data = {
+                        'type': 'binary_file',
+                        'filename': os.path.basename(file_path),
+                        'content': file_content
+                    }
+                    
+                    file_json = json.dumps(file_data)
+                    print(f"Hiding binary file content directly (base64 encoded)")
+                    return self.hide_message(file_json, cover_image, output_image, public_key_path, password)
+                    
         except Exception as e:
-            print(f"✗ Error hiding file link: {str(e)}")
+            print(f"✗ Error processing file: {str(e)}")
             return False
     
     def get_image_capacity(self, image_path: str) -> None:
@@ -230,14 +275,64 @@ class SteganographyApp:
             print(f"✗ Image not found: {image_path}")
             return
         
+        # Validate image
+        if not self.file_utils.is_supported_image(image_path):
+            print(f"✗ Unsupported image format: {image_path}")
+            return
+        
         capacity_bits = self.stego.get_image_capacity(image_path)
-        capacity_bytes = capacity_bits // 8
-        capacity_kb = capacity_bytes / 1024
+        capacity_human = self.file_utils._human_readable_size(capacity_bits // 8)
         
         print(f"Image capacity for '{image_path}':")
         print(f"  - {capacity_bits:,} bits")
-        print(f"  - {capacity_bytes:,} bytes")
-        print(f"  - {capacity_kb:.2f} KB")
+        print(f"  - {capacity_bits // 8:,} bytes")
+        print(f"  - {capacity_human}")
+    
+    def analyze_file(self, file_path: str) -> None:
+        """
+        Analyze a file and display its properties and recommended processing method.
+        
+        Args:
+            file_path (str): Path to the file to analyze
+        """
+        if not os.path.exists(file_path):
+            print(f"✗ File not found: {file_path}")
+            return
+        
+        file_info = self.file_utils.get_file_info(file_path)
+        
+        if 'error' in file_info:
+            print(f"✗ Error analyzing file: {file_info['error']}")
+            return
+        
+        print(f"File Analysis for '{file_info['file_name']}':")
+        print(f"  - Size: {file_info['file_size_human']} ({file_info['file_size']:,} bytes)")
+        print(f"  - Type: {file_info['mime_type']}")
+        print(f"  - Extension: {file_info['file_extension']}")
+        print(f"  - Large file: {'Yes' if file_info['is_large_file'] else 'No'}")
+        print(f"  - Use cloud storage: {'Yes' if file_info['should_use_cloud'] else 'No'}")
+        print(f"  - Supported image: {'Yes' if file_info['is_supported_image'] else 'No'}")
+        print(f"  - Processing method: {file_info['processing_method']}")
+        print(f"  - File hash: {file_info['file_hash'][:16]}...") 
+    
+    def launch_gui(self) -> None:
+        """
+        Launch the GUI application.
+        """
+        try:
+            import tkinter as tk
+            from gui.main_gui import SteganographyGUI
+            
+            print("Launching GUI application...")
+            root = tk.Tk()
+            app = SteganographyGUI(root)
+            root.mainloop()
+            
+        except ImportError as e:
+            print(f"✗ GUI dependencies not available: {str(e)}")
+            print("Please install tkinter and related GUI dependencies")
+        except Exception as e:
+            print(f"✗ Error launching GUI: {str(e)}")
 
 
 def create_parser():
@@ -284,6 +379,14 @@ Examples:
     parser.add_argument('--hide-file', type=str, metavar='FILE',
                        help='File to upload and hide link in image')
     
+    # File analysis
+    parser.add_argument('--analyze', type=str, metavar='FILE',
+                       help='Analyze file and show processing recommendations')
+    
+    # GUI launch
+    parser.add_argument('--gui', action='store_true',
+                       help='Launch graphical user interface')
+    
     # Key paths
     parser.add_argument('--public-key', type=str, metavar='PATH',
                        help='Path to RSA public key file')
@@ -308,9 +411,19 @@ def main():
     app = SteganographyApp()
     
     try:
+        # Launch GUI
+        if args.gui:
+            app.launch_gui()
+            return
+        
         # Generate keys
         if args.generate_keys:
             app.generate_keys()
+            return
+        
+        # Analyze file
+        if args.analyze:
+            app.analyze_file(args.analyze)
             return
         
         # Check image capacity
@@ -342,7 +455,7 @@ def main():
                 return
             
             success = app.hide_file_link(
-                args.hide_file, args.cover, args.output, args.public_key
+                args.hide_file, args.cover, args.output, args.public_key, password
             )
             return
         

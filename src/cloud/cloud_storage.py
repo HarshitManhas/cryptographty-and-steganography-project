@@ -2,7 +2,8 @@
 Cloud Storage Integration Module
 
 This module provides integration with cloud storage services for 
-uploading and managing large files securely.
+uploading and managing large files securely, with primary support
+for Google Drive integration.
 """
 
 import os
@@ -11,6 +12,14 @@ import time
 from typing import Optional, Dict, Any
 import logging
 
+# Import Google Drive integration
+try:
+    from .google_drive import GoogleDriveStorage
+    HAS_GOOGLE_DRIVE = True
+except ImportError:
+    HAS_GOOGLE_DRIVE = False
+    logger.warning("Google Drive integration not available")
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -18,34 +27,46 @@ logger = logging.getLogger(__name__)
 
 class CloudStorage:
     """
-    Cloud storage integration class.
+    Enhanced cloud storage integration class with Google Drive support.
     
-    Note: This is a template implementation. In a real application, 
-    you would integrate with actual cloud providers like AWS S3, 
-    Google Cloud Storage, Azure Blob Storage, etc.
+    This class acts as a unified interface for different cloud storage providers,
+    with primary support for Google Drive and fallback to demo mode.
     """
     
-    def __init__(self, provider: str = "demo", config: Dict[str, Any] = None):
+    def __init__(self, provider: str = "google_drive", config: Dict[str, Any] = None):
         """
         Initialize cloud storage.
         
         Args:
-            provider (str): Cloud provider name
+            provider (str): Cloud provider name ('google_drive' or 'demo')
             config (Dict[str, Any], optional): Configuration for the cloud provider
         """
         self.provider = provider
         self.config = config or {}
         self.upload_url_base = "https://secure-cloud.example.com/files/"
         
-        logger.info(f"Cloud storage initialized with provider: {provider}")
+        # Initialize provider-specific storage
+        self.google_drive = None
+        if provider == "google_drive" and HAS_GOOGLE_DRIVE:
+            try:
+                credentials_path = self.config.get('credentials_path', 'credentials.json')
+                token_path = self.config.get('token_path', 'token.pickle')
+                self.google_drive = GoogleDriveStorage(credentials_path, token_path)
+                logger.info("Google Drive storage initialized")
+            except Exception as e:
+                logger.error(f"Failed to initialize Google Drive: {e}")
+                self.provider = "demo"  # Fallback to demo mode
+        
+        logger.info(f"Cloud storage initialized with provider: {self.provider}")
     
-    def upload_file(self, file_path: str, encrypt: bool = True) -> Optional[Dict[str, str]]:
+    def upload_file(self, file_path: str, encrypt: bool = True, folder_name: str = "SteganographyFiles") -> Optional[Dict[str, str]]:
         """
-        Upload a file to cloud storage.
+        Upload a file to cloud storage using the configured provider.
         
         Args:
             file_path (str): Path to the file to upload
-            encrypt (bool): Whether to encrypt the file during upload
+            encrypt (bool): Whether to encrypt the file during upload (for demo mode)
+            folder_name (str): Folder name in cloud storage
             
         Returns:
             Dict[str, str]: Upload result with file info, or None if failed
@@ -55,6 +76,77 @@ class CloudStorage:
                 logger.error(f"File not found: {file_path}")
                 return None
             
+            # Use Google Drive if available
+            if self.provider == "google_drive" and self.google_drive:
+                return self._upload_to_google_drive(file_path, folder_name)
+            
+            # Fallback to demo mode
+            return self._upload_demo_mode(file_path, encrypt)
+            
+        except Exception as e:
+            logger.error(f"Error uploading file: {str(e)}")
+            return None
+    
+    def _upload_to_google_drive(self, file_path: str, folder_name: str) -> Optional[Dict[str, str]]:
+        """
+        Upload file to Google Drive.
+        
+        Args:
+            file_path (str): Path to the file to upload
+            folder_name (str): Google Drive folder name
+            
+        Returns:
+            Dict[str, str]: Upload result with file info, or None if failed
+        """
+        try:
+            # Authenticate if needed
+            if not self.google_drive.is_authenticated():
+                logger.info("Authenticating with Google Drive...")
+                if not self.google_drive.authenticate():
+                    logger.error("Google Drive authentication failed")
+                    return None
+            
+            # Upload to Google Drive
+            upload_result = self.google_drive.upload_file(file_path, folder_name)
+            
+            if upload_result:
+                # Format result to match CloudStorage interface
+                result = {
+                    'file_id': upload_result['file_id'],
+                    'file_name': upload_result['file_name'],
+                    'file_size': upload_result['file_size'],
+                    'cloud_url': upload_result['shareable_link'],
+                    'view_link': upload_result.get('view_link', ''),
+                    'download_link': upload_result.get('download_link', ''),
+                    'folder_name': upload_result['folder_name'],
+                    'encrypted': 'false',  # Google Drive handles its own encryption
+                    'upload_time': str(int(time.time())),
+                    'provider': 'google_drive',
+                    'upload_status': upload_result['upload_status']
+                }
+                
+                logger.info(f"✓ File uploaded to Google Drive successfully")
+                return result
+            else:
+                logger.error("Google Drive upload failed")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error uploading to Google Drive: {str(e)}")
+            return None
+    
+    def _upload_demo_mode(self, file_path: str, encrypt: bool = True) -> Optional[Dict[str, str]]:
+        """
+        Simulate file upload in demo mode.
+        
+        Args:
+            file_path (str): Path to the file to upload
+            encrypt (bool): Whether to encrypt the file during upload
+            
+        Returns:
+            Dict[str, str]: Simulated upload result
+        """
+        try:
             # Get file information
             file_name = os.path.basename(file_path)
             file_size = os.path.getsize(file_path)
@@ -66,13 +158,7 @@ class CloudStorage:
             file_id = self._generate_file_id(file_name, file_hash)
             
             # Simulate upload process
-            logger.info(f"Uploading {file_name} ({file_size} bytes) to cloud storage...")
-            
-            # In a real implementation, this would:
-            # 1. Connect to cloud storage API
-            # 2. Upload the file (with optional encryption)
-            # 3. Get the download URL
-            # 4. Return the result
+            logger.info(f"[DEMO MODE] Uploading {file_name} ({file_size} bytes)...")
             
             # Simulate upload delay
             time.sleep(1)
@@ -89,14 +175,15 @@ class CloudStorage:
                 'cloud_url': cloud_url,
                 'encrypted': str(encrypt),
                 'upload_time': str(int(time.time())),
-                'provider': self.provider
+                'provider': 'demo',
+                'upload_status': 'success'
             }
             
-            logger.info(f"File uploaded successfully: {cloud_url}")
+            logger.info(f"[DEMO MODE] File upload simulated: {cloud_url}")
             return result
             
         except Exception as e:
-            logger.error(f"Error uploading file: {str(e)}")
+            logger.error(f"Error in demo upload: {str(e)}")
             return None
     
     def download_file(self, cloud_url: str, output_path: str, decrypt: bool = True) -> bool:
@@ -270,6 +357,50 @@ class CloudStorage:
         file_id = hashlib.sha256(unique_string.encode()).hexdigest()[:32]
         return file_id
     
+    def authenticate(self) -> bool:
+        """
+        Authenticate with the cloud storage provider.
+        
+        Returns:
+            bool: True if authentication successful, False otherwise
+        """
+        if self.provider == "google_drive" and self.google_drive:
+            return self.google_drive.authenticate()
+        
+        # Demo mode doesn't require authentication
+        return True
+    
+    def is_authenticated(self) -> bool:
+        """
+        Check if authenticated with the cloud storage provider.
+        
+        Returns:
+            bool: True if authenticated, False otherwise
+        """
+        if self.provider == "google_drive" and self.google_drive:
+            return self.google_drive.is_authenticated()
+        
+        # Demo mode is always "authenticated"
+        return True
+    
+    def list_files(self, folder_name: str = "SteganographyFiles", limit: int = 10) -> list:
+        """
+        List files in cloud storage.
+        
+        Args:
+            folder_name (str): Folder name to list files from
+            limit (int): Maximum number of files to return
+            
+        Returns:
+            list: List of file information
+        """
+        if self.provider == "google_drive" and self.google_drive:
+            return self.google_drive.list_files(folder_name, limit)
+        
+        # Demo mode returns empty list
+        logger.info("[DEMO MODE] No files to list")
+        return []
+    
     def get_provider_info(self) -> Dict[str, str]:
         """
         Get information about the cloud provider.
@@ -277,32 +408,78 @@ class CloudStorage:
         Returns:
             Dict[str, str]: Provider information
         """
-        return {
+        info = {
             'provider': self.provider,
-            'upload_url_base': self.upload_url_base,
             'status': 'active',
             'features': 'upload,download,delete,secure_links'
         }
+        
+        if self.provider == "google_drive":
+            info.update({
+                'service': 'Google Drive API v3',
+                'authentication': 'OAuth2',
+                'folder_support': 'yes',
+                'sharing': 'shareable_links'
+            })
+        else:
+            info.update({
+                'upload_url_base': self.upload_url_base,
+                'note': 'Demo mode - files not actually uploaded'
+            })
+        
+        return info
 
 
 def main():
     """
     Demo function to test cloud storage functionality.
     """
-    cloud = CloudStorage()
+    print("=" * 60)
+    print("CLOUD STORAGE MODULE DEMO")
+    print("=" * 60)
     
-    print("Cloud Storage module initialized successfully")
-    print(f"Provider: {cloud.provider}")
-    print("Available methods:")
-    print("- upload_file()")
-    print("- download_file()")
-    print("- delete_file()")
-    print("- generate_secure_link()")
-    print("- validate_cloud_url()")
+    # Test with Google Drive (if available)
+    if HAS_GOOGLE_DRIVE:
+        print("\n1. Testing Google Drive integration...")
+        cloud_gd = CloudStorage(provider="google_drive")
+        print(f"   Provider: {cloud_gd.provider}")
+        print(f"   Authenticated: {cloud_gd.is_authenticated()}")
+        
+        provider_info = cloud_gd.get_provider_info()
+        print(f"   Provider info: {provider_info}")
+    else:
+        print("\n1. Google Drive integration not available")
+        print("   Install google-api-python-client to enable")
     
-    # Demo provider info
-    provider_info = cloud.get_provider_info()
-    print(f"\\nProvider info: {provider_info}")
+    # Test with demo mode
+    print("\n2. Testing Demo Mode...")
+    cloud_demo = CloudStorage(provider="demo")
+    print(f"   Provider: {cloud_demo.provider}")
+    print(f"   Authenticated: {cloud_demo.is_authenticated()}")
+    
+    provider_info = cloud_demo.get_provider_info()
+    print(f"   Provider info: {provider_info}")
+    
+    print("\nAvailable methods:")
+    print("- upload_file(file_path, encrypt=True, folder_name='SteganographyFiles')")
+    print("- download_file(cloud_url, output_path)")
+    print("- delete_file(cloud_url)")
+    print("- authenticate()")
+    print("- is_authenticated()")
+    print("- list_files(folder_name, limit)")
+    print("- generate_secure_link(cloud_url, expiry_hours)")
+    print("- validate_cloud_url(cloud_url)")
+    print("- get_provider_info()")
+    
+    print("\n" + "=" * 60)
+    print("To use Google Drive:")
+    print("1. Go to Google Cloud Console")
+    print("2. Create a project and enable Google Drive API")
+    print("3. Create OAuth2 credentials")
+    print("4. Download credentials as 'credentials.json'")
+    print("5. Place in project root directory")
+    print("6. Run cloud.authenticate()")
+    print("=" * 60)
 
 
 if __name__ == "__main__":

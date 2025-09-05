@@ -7,13 +7,21 @@ numpy>=1.24.0
 pytest>=7.4.0
 pytest-cov>=4.1.0
 
+# Google Drive Integration
+google-api-python-client>=2.100.0
+google-auth-httplib2>=0.1.1
+google-auth-oauthlib>=1.0.0
+
+# File handling and utilities
+python-magic>=0.4.27  # For file type detection
+humanize>=4.8.0  # For human-readable file sizes
+
 # Optional dependencies for enhanced functionality
 colorama>=0.4.6  # For colored terminal output
 tqdm>=4.66.0     # For progress bars
 
 # Cloud storage integrations (optional, install as needed)
 # boto3>=1.26.0      # For AWS S3
-# google-cloud-storage>=2.10.0  # For Google Cloud Storage
 # azure-storage-blob>=12.17.0   # For Azure Blob Storage
 
 # Documentation (optional)
