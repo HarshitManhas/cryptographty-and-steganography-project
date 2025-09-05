@@ -1,0 +1,21 @@
+# Core Dependencies
+cryptography>=41.0.0
+Pillow>=10.0.0
+numpy>=1.24.0
+
+# Testing and Development
+pytest>=7.4.0
+pytest-cov>=4.1.0
+
+# Optional dependencies for enhanced functionality
+colorama>=0.4.6  # For colored terminal output
+tqdm>=4.66.0     # For progress bars
+
+# Cloud storage integrations (optional, install as needed)
+# boto3>=1.26.0      # For AWS S3
+# google-cloud-storage>=2.10.0  # For Google Cloud Storage
+# azure-storage-blob>=12.17.0   # For Azure Blob Storage
+
+# Documentation (optional)
+# sphinx>=7.1.0
+# sphinx-rtd-theme>=1.3.0
