@@ -1,3 +1,0 @@
-This is a small text file for testing steganography.
-It contains multiple lines of text.
-This should be processed directly.

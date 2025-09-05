@@ -167,5 +167,6 @@ config/secrets.json
 test_images/
 output_images/
 
-
-WARP.md
+# Authentication files
+credentials.json
+token.pickle
